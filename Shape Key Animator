@@ -1,0 +1,110 @@
+# ##### BEGIN GPL LICENSE BLOCK #####
+#
+#  This program is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU General Public License
+#  as published by the Free Software Foundation; either version 2
+#  of the License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software Foundation,
+#  Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+#
+# ##### END GPL LICENSE BLOCK #####
+
+bl_info = {
+    "name": "Shape Key Animator",
+    "author": "Cody Winchester",
+    "version": (1, 0),
+    "blender": (2, 72, 0),
+    "location": "View3D > Tools",
+    "description": "Adds Animated Shape Keys with auto keyframed values in and out",
+    "category": "Animation"}
+
+import bpy
+
+class ShapeKeyAnimatorPanel(bpy.types.Panel):
+    """Creates a Panel in the scene context of the properties editor"""
+    bl_category = 'Tools'
+    bl_label = "Shape Key Animator"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'TOOLS'
+            
+    @classmethod
+    def poll(cls, context):
+        objectcheck = False
+        obj = context.active_object
+        if obj is not None:
+            if obj.type == 'MESH':
+                objectcheck = True
+        return (objectcheck)
+    
+    #Creates the properties under the toolbar
+    mesh = bpy.types.Mesh
+    mesh.sculpt_mode = bpy.props.BoolProperty(name = "Sculpt Mode", description = "Switch to Sculpt Mode", default = False)
+    mesh.frame_amount = bpy.props.IntProperty(name = "Frame Transition", description = "Number of frames to transition from 0.0 to 1.0 shape key vaule", default = 1, min = 1, max = 100)
+    
+    def draw(self, context):
+        context = bpy.context
+        obj = context.active_object
+        layout = self.layout
+        me = obj.data
+        
+        row = layout.row()
+        row.prop(me, "frame_amount")
+        row = layout.row()
+        row.prop(me, "sculpt_mode")
+        row = layout.row()
+        row.operator("object.skanimator")
+        
+
+class ShapeKeyAnimator(bpy.types.Operator):
+    bl_idname = "object.skanimator"
+    bl_label = "Add Animator Key"
+
+    def execute(self, context):
+        context = bpy.context
+        scn = context.scene
+        obj = context.active_object
+        me = obj.data
+        mesh = bpy.types.Mesh
+        
+        if me.shape_keys == None:
+            bpy.ops.object.shape_key_add(from_mix=False)
+        bpy.ops.object.shape_key_add(from_mix=False)
+        
+        index = len(me.shape_keys.key_blocks) - 1
+        keyname = me.shape_keys.name
+        
+        bpy.data.objects[obj.name].active_shape_key.name = "SKA Frame # " + str(scn.frame_current)
+        
+        if me.sculpt_mode == True:
+            if obj.mode != 'SCULPT':
+                bpy.ops.sculpt.sculptmode_toggle()
+        
+        current_key = me.shape_keys.key_blocks[index]
+        
+        current_key.value = 0.0
+        current_key.keyframe_insert("value", index = -1, frame = ((scn.frame_current) - me.frame_amount))
+        current_key.keyframe_insert("value", index = -1, frame = ((scn.frame_current) + me.frame_amount))
+        current_key.value = 1.0
+        current_key.keyframe_insert("value", index = -1, frame = scn.frame_current)
+        
+        return {'FINISHED'}
+
+def register():
+    bpy.utils.register_class(ShapeKeyAnimatorPanel)
+    bpy.utils.register_class(ShapeKeyAnimator)
+
+
+def unregister():
+    bpy.utils.unregister_class(ShapeKeyAnimatorPanel)
+    bpy.utils.unregister_class(ShapeKeyAnimator)
+
+
+if __name__ == "__main__":
+    register()
