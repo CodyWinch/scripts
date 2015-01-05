@@ -59,6 +59,11 @@ class ParticleMeshBaker(bpy.types.Operator):
                 scn.frame_current = fstart
                 me.update()
         
+        #Checks if any data has the name Mesh.001 and changes it to Mesh.000
+        for m in bpy.data.meshes:
+            if m.name == 'Mesh.001':
+                m.name = 'Mesh.000'
+        
         while frame <= fend:
             rename = False
             baker(obj)
@@ -98,12 +103,15 @@ class ParticleMeshBaker(bpy.types.Operator):
                 bakeobj = scn.objects.active
             
             if rename == True:
+                mesh = bpy.data.meshes['Mesh.001']
                 bpy.ops.object.delete()
+                bpy.data.meshes.remove(mesh)
+                #bpy.data.meshes.remove(mesh)
                 
             frame += 1
             scn.frame_current = frame
             
-            bpy.ops.object.select_all(action='TOGGLE')
+            bpy.ops.object.select_all(action='DESELECT')
             scn.objects.active = obj
             obj.select = True
         
