@@ -1,0 +1,147 @@
+import bpy
+
+context = bpy.context
+scn = context.scene
+obj = context.active_object
+me = obj.data
+frame = 0
+fstart = scn.frame_start
+fend = scn.frame_end
+cframe = scn.frame_current
+
+
+class ParticleMeshBakerPanel(bpy.types.Panel):
+    """Creates a Panel in the scene context of the properties editor"""
+    bl_category = 'Tools'
+    bl_label = "Particle Mesh Baker"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'TOOLS'
+            
+    @classmethod
+    def poll(cls, context):
+        objectcheck = False
+        obj = context.active_object
+        if obj is not None:
+            if obj.type == 'MESH':
+                if obj.particle_systems:
+                    objectcheck = True
+        return (objectcheck)
+
+
+    def draw(self, context):
+        context = bpy.context
+        obj = context.active_object
+        layout = self.layout
+        me = obj.data
+
+        row = layout.row()
+        row.operator("object.partbaker")
+        
+
+class ParticleMeshBaker(bpy.types.Operator):
+    bl_idname = "object.partbaker"
+    bl_label = "Bake Particle Fur to Mesh"
+
+    def execute(self, context):
+        context = bpy.context
+        scn = context.scene
+        obj = context.active_object
+        me = obj.data
+        mesh = bpy.types.Mesh
+        
+        global frame
+        fstart = scn.frame_start
+        fend = scn.frame_end
+        cframe = scn.frame_current
+        
+        if frame == 0:
+            if cframe != fstart:
+                scn.frame_current = fstart
+                me.update()
+        
+        while frame <= fend:
+            rename = False
+            baker(obj)
+            newobj = scn.objects.active
+            
+            #Checks if Baked Hair Mesh is already made
+            for ob in scn.objects:
+                if ob.name == 'Baked Hair':
+                    rename = True
+                    
+            #If Baked Hair is made makes new mesh as temp then adds it as a shape to baked hair
+            if rename == True:
+                newobj.name = 'Baked Hair Temp'
+                bakeobj.select = True
+                scn.objects.active = bakeobj
+                
+                bpy.ops.object.join_shapes()
+                
+                index = len(bakeobj.data.shape_keys.key_blocks)-1
+                
+                current_key = bakeobj.data.shape_keys.key_blocks[index]
+        
+                current_key.value = 0.0
+                current_key.keyframe_insert("value", index = -1, frame = ((scn.frame_current) - 1))
+                current_key.keyframe_insert("value", index = -1, frame = ((scn.frame_current) + 1))
+                current_key.value = 1.0
+                current_key.keyframe_insert("value", index = -1, frame = scn.frame_current)
+                
+                
+                
+                
+                bakeobj.select = False
+                
+            #If Baked Hair is not made it is named and stored as bakeobj
+            else:
+                newobj.name = 'Baked Hair'
+                bakeobj = scn.objects.active
+            
+            if rename == True:
+                bpy.ops.object.delete()
+                
+            frame += 1
+            scn.frame_current = frame
+            
+            bpy.ops.object.select_all(action='TOGGLE')
+            scn.objects.active = obj
+            obj.select = True
+        
+        if frame > fend:
+            frame = 0
+        
+        return {'FINISHED'}
+
+
+def baker(obj):
+        for mod in range(len(obj.modifiers)):
+            if obj.modifiers[mod].type == 'PARTICLE_SYSTEM':
+                partsys = obj.modifiers[mod].name
+                
+        me.update()
+        
+        bpy.ops.object.modifier_convert(modifier=partsys)
+        
+    
+    
+
+print ("END")    
+
+
+#bpy.app.handlers.frame_change_post.clear()
+#bpy.app.handlers.frame_change_post.append(baker)
+
+
+def register():
+    bpy.utils.register_class(ParticleMeshBakerPanel)
+    bpy.utils.register_class(ParticleMeshBaker)
+
+
+def unregister():
+    bpy.utils.unregister_class(ParticleMeshBakerPanel)
+    bpy.utils.unregister_class(ParticleMeshBaker)
+    
+
+
+if __name__ == "__main__":
+    register()
