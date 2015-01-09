@@ -1,13 +1,33 @@
-import bpy
+# ##### BEGIN GPL LICENSE BLOCK #####
+#
+#  This program is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU General Public License
+#  as published by the Free Software Foundation; either version 2
+#  of the License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software Foundation,
+#  Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+#
+# ##### END GPL LICENSE BLOCK #####
 
-context = bpy.context
-scn = context.scene
-obj = context.active_object
-me = obj.data
-frame = 0
-fstart = scn.frame_start
-fend = scn.frame_end
-cframe = scn.frame_current
+bl_info = {
+    "name": "Hair Mesher",
+    "author": "Cody Winchester",
+    "version": (1, 2),
+    "blender": (2, 72, 0),
+    "location": "View3D > Tools",
+    "description": "Bake out Particle Hair to a mesh or curve object",
+    "category": "Mesh"}
+
+import bpy
+import bmesh
+from mathutils import Vector, Matrix
 
 
 class ParticleMeshBakerPanel(bpy.types.Panel):
@@ -19,13 +39,20 @@ class ParticleMeshBakerPanel(bpy.types.Panel):
             
     @classmethod
     def poll(cls, context):
-        objectcheck = False
+        partcheck = False
         obj = context.active_object
         if obj is not None:
             if obj.type == 'MESH':
-                if obj.particle_systems:
-                    objectcheck = True
-        return (objectcheck)
+                #if obj.particle_systems:
+                partcheck = True
+        return (partcheck)
+    
+    
+    #Creates the properties under the toolbar
+    mesh = bpy.types.Mesh
+    mesh.separate_curve = bpy.props.BoolProperty(name = "Seperate Curves per Strand", description = "Create a seperate curve for each strand", default = False)
+    mesh.active = bpy.props.BoolProperty(name = "Activate Particle Mesher", description = "Turn on Baker", default = False)
+    
 
 
     def draw(self, context):
@@ -33,14 +60,61 @@ class ParticleMeshBakerPanel(bpy.types.Panel):
         obj = context.active_object
         layout = self.layout
         me = obj.data
-
-        row = layout.row()
-        row.operator("object.partbaker")
+        check = False
         
+        
+        row = layout.row()
+        row.prop(me, "active")
+        
+        if me.active:
+            layout.label(text="Particle Baking Options")
+            box = layout.box()
+            
+            row = box.row()
+            row.prop(me, "separate_curve")
+            
+            if obj.particle_systems:
+                for mod in obj.modifiers:
+                    if mod.type == 'PARTICLE_SYSTEM':
+                        if mod.particle_system.settings.type == 'HAIR':
+                            check = True
+                        else:
+                            check = False
+            if check != True:
+                row.enabled = False
+            
+            row = box.row()
+            row.operator("object.partbakercurve")
+            
+            if obj.particle_systems:
+                for mod in obj.modifiers:
+                    if mod.type == 'PARTICLE_SYSTEM':
+                        if mod.particle_system.settings.type == 'HAIR':
+                            check = True
+                        else:
+                            check = False
+            if check != True:
+                row.enabled = False
 
-class ParticleMeshBaker(bpy.types.Operator):
-    bl_idname = "object.partbaker"
-    bl_label = "Bake Particle Fur to Mesh"
+            row = box.row()
+            row.operator("object.partbakermesh")
+            
+            if obj.particle_systems:
+                for mod in obj.modifiers:
+                    if mod.type == 'PARTICLE_SYSTEM':
+                        if mod.particle_system.settings.type == 'HAIR':
+                            check = True
+                        else:
+                            check = False
+            if check != True:
+                row.enabled = False
+                
+            row = layout.row()
+            row.operator("object.objcurve")
+    
+class ParticleCurveBaker(bpy.types.Operator):
+    bl_idname = "object.partbakercurve"
+    bl_label = "Bake Hair to Curve"
 
     def execute(self, context):
         context = bpy.context
@@ -49,11 +123,15 @@ class ParticleMeshBaker(bpy.types.Operator):
         me = obj.data
         mesh = bpy.types.Mesh
         
-        global frame
+        frame = 0
         fstart = scn.frame_start
         fend = scn.frame_end
         cframe = scn.frame_current
+        curvecount = 0
+        curvelist =[]
+        newobjlist =[]
         
+        #Checks current frame and sets it to start frame if not already there
         if frame == 0:
             if cframe != fstart:
                 scn.frame_current = fstart
@@ -61,6 +139,135 @@ class ParticleMeshBaker(bpy.types.Operator):
         
         #Checks if any data has the name Mesh.001 and changes it to Mesh.000
         for m in bpy.data.meshes:
+            if m.name == 'Mesh':
+                m.name = 'MeshOld'
+            if m.name == 'Mesh.001':
+                m.name = 'Mesh.000'
+        
+        #Renames any group that has name already
+        for g in bpy.data.groups:
+            if g.name == 'Baked Curve Particles':
+                g.name = 'Old Baked Curve Particles'
+        
+        #Sets up group for curves
+        bpy.ops.group.create(name='Baked Curve Particles')
+        bpy.ops.group.objects_remove_all()
+        
+        while frame <= fend:
+            rename = False
+            bakeobj = baker(obj)
+            
+            #Checks if Baked Hair Mesh is already made
+            for ob in scn.objects:
+                if ob.name == 'Baked Hair Curve':
+                    rename = True
+                    bakeobj = ob
+                    
+            #If Baked Hair is made makes new mesh as temp then adds it as a shape to baked hair
+            if rename == True:
+                newobj = bpy.context.active_object
+                newobj.name = 'Baked Hair Curve Temp'
+                bakeobj.select = True
+                scn.objects.active = bakeobj
+                bpy.ops.object.convert(target='CURVE')
+                
+                bpy.ops.object.shape_key_add(from_mix=False)
+                bpy.ops.object.editmode_toggle()
+                for vert in range(len(bakeobj.data.splines)):
+                    for point in range(len(bakeobj.data.splines[vert].points)):
+                        bakeobj.data.splines[vert].points[point].co = newobj.data.splines[vert].points[point].co
+                bpy.ops.curve.select_all(action="DESELECT")
+                bpy.ops.curve.de_select_first()
+                bpy.ops.object.editmode_toggle()
+                
+                index = len(bakeobj.data.shape_keys.key_blocks)-1
+                
+                current_key = bakeobj.data.shape_keys.key_blocks[index]
+        
+                current_key.value = 0.0
+                current_key.keyframe_insert("value", index = -1, frame = ((scn.frame_current) - 1))
+                current_key.keyframe_insert("value", index = -1, frame = ((scn.frame_current) + 1))
+                current_key.value = 1.0
+                current_key.keyframe_insert("value", index = -1, frame = scn.frame_current)
+                
+                bakeobj.select = False
+                
+                mesh = bpy.data.meshes['Mesh.001']
+                bpy.ops.object.delete()
+                bpy.data.meshes.remove(mesh)
+            
+            #If Baked Hair is not made it is named and stored as bakeobj
+            else:
+                bpy.ops.object.convert(target='CURVE')
+                bakeobj.name = 'Baked Hair Curve'
+                bakeobj = scn.objects.active
+                bpy.ops.object.shape_key_add(from_mix=False)
+            
+            #Advance 1 frame
+            frame += 1
+            scn.frame_current = frame
+            
+            #Return selection to original object
+            bpy.ops.object.select_all(action='DESELECT')
+            scn.objects.active = obj
+            obj.select = True
+        
+        if frame > fend:
+            frame = 0
+            
+        if obj.data.separate_curve == True:
+            for sp in range(len(bakeobj.data.splines)):
+                bpy.ops.object.select_all(action='DESELECT')
+                bakeobj.select = True
+                scn.objects.active = bakeobj
+                bpy.ops.object.duplicate()
+                newobj = bpy.context.active_object
+                bpy.ops.object.editmode_toggle()
+                
+                bpy.ops.curve.select_all(action='DESELECT')
+                newobj.data.splines[sp].points[0].select = True
+                bpy.ops.curve.select_linked()
+                bpy.ops.curve.select_all(action='INVERT')
+                bpy.ops.curve.delete(type='VERT')
+                
+                bpy.ops.curve.de_select_first()
+                bpy.ops.object.editmode_toggle()
+                
+                curvesetorigin()
+                
+            bpy.ops.object.select_all(action='DESELECT')
+            bakeobj.select = True
+            bpy.ops.object.delete()
+        
+        return {'FINISHED'}
+
+
+class ParticleMeshBaker(bpy.types.Operator):
+    bl_idname = "object.partbakermesh"
+    bl_label = "Bake Hair to Mesh"
+
+    def execute(self, context):
+        context = bpy.context
+        scn = context.scene
+        obj = context.active_object
+        me = obj.data
+        mesh = bpy.types.Mesh
+        
+        frame = 0
+        fstart = scn.frame_start
+        fend = scn.frame_end
+        cframe = scn.frame_current
+        
+        #Checks current frame and sets it to start frame if not already there
+        if frame == 0:
+            if cframe != fstart:
+                scn.frame_current = fstart
+                me.update()
+        
+        #Checks if any data has the name Mesh.001 and changes it to Mesh.000
+        for m in bpy.data.meshes:
+            if m.name == 'Mesh':
+                m.name = 'MeshOld'
             if m.name == 'Mesh.001':
                 m.name = 'Mesh.000'
         
@@ -71,12 +278,12 @@ class ParticleMeshBaker(bpy.types.Operator):
             
             #Checks if Baked Hair Mesh is already made
             for ob in scn.objects:
-                if ob.name == 'Baked Hair':
+                if ob.name == 'Baked Hair Mesh':
                     rename = True
                     
             #If Baked Hair is made makes new mesh as temp then adds it as a shape to baked hair
             if rename == True:
-                newobj.name = 'Baked Hair Temp'
+                newobj.name = 'Baked Hair Mesh Temp'
                 bakeobj.select = True
                 scn.objects.active = bakeobj
                 
@@ -92,63 +299,119 @@ class ParticleMeshBaker(bpy.types.Operator):
                 current_key.value = 1.0
                 current_key.keyframe_insert("value", index = -1, frame = scn.frame_current)
                 
-                
-                
-                
                 bakeobj.select = False
                 
-            #If Baked Hair is not made it is named and stored as bakeobj
-            else:
-                newobj.name = 'Baked Hair'
-                bakeobj = scn.objects.active
-            
-            if rename == True:
                 mesh = bpy.data.meshes['Mesh.001']
                 bpy.ops.object.delete()
                 bpy.data.meshes.remove(mesh)
-                #bpy.data.meshes.remove(mesh)
+            
+            #If Baked Hair is not made it is named and stored as bakeobj
+            else:
+                newobj.name = 'Baked Hair Mesh'
+                bakeobj = scn.objects.active
+                bpy.ops.object.shape_key_add(from_mix=False)
                 
+                bakeobj.vertex_groups.new(name = 'Root Vertices')
+                for vert in bakeobj.data.vertices:
+                    if vert.select == True:
+                        bakeobj.vertex_groups['Root Vertices'].add([vert.index], 1, 'ADD')
+            
+            #Advance 1 frame
             frame += 1
             scn.frame_current = frame
             
+            #Return selection to original object
             bpy.ops.object.select_all(action='DESELECT')
             scn.objects.active = obj
             obj.select = True
+            bpy.ops.object.group_remove()
         
         if frame > fend:
             frame = 0
         
         return {'FINISHED'}
 
+class ObjectCurve(bpy.types.Operator):
+    bl_idname = "object.objcurve"
+    bl_label = "Active Object as Strands"
+
+    def execute(self, context):
+        context = bpy.context
+        scn = context.scene
+        ob = context.active_object
+        me = ob.data
+        mesh = bpy.types.Mesh
+        group = bpy.data.groups['Baked Curve Particles']
+        
+        
+        #Sets up group for curves
+        bpy.ops.group.create(name='Curve Dupli Object')
+        bpy.ops.group.objects_remove_all()
+        
+        for obj in group.objects:
+            ob.select=True
+            scn.objects.active = ob
+            bpy.ops.object.duplicate_move_linked()
+            bpy.ops.object.group_link(group='Curve Dupli Object')
+            aobj = context.active_object
+            aobj.location = obj.location
+            bpy.ops.object.modifier_add(type='CURVE')
+            context.object.modifiers["Curve"].deform_axis = 'POS_Z'
+            context.object.modifiers["Curve"].object = obj
+            bpy.ops.object.select_all(action='DESELECT')
+            
+        return {'FINISHED'}
+
+def curvesetorigin():
+    
+    items = bpy.context.active_object
+    mat = items.matrix_world
+    me = items.data
+
+    bpy.context.object.active_shape_key_index = 0
+    bpy.ops.object.group_link(group='Baked Curve Particles')
+        
+    if items.mode == 'OBJECT':
+        bpy.ops.object.editmode_toggle()
+
+    v = [v.co for v in me.splines[0].points if v.select]
+    loc = v[0].xyz
+    mat.translation = loc
+    bpy.ops.curve.select_all(action="SELECT")
+    bpy.ops.transform.translate(value=(-loc))
+    bpy.ops.object.editmode_toggle()
 
 def baker(obj):
         for mod in range(len(obj.modifiers)):
             if obj.modifiers[mod].type == 'PARTICLE_SYSTEM':
                 partsys = obj.modifiers[mod].name
                 
-        me.update()
+        obj.data.update()
         
         bpy.ops.object.modifier_convert(modifier=partsys)
         
-    
-    
+        obj = bpy.context.active_object
+        
+        obj.vertex_groups.new(name = 'Root Vertices')
+        for vert in obj.data.vertices:
+            if vert.select == True:
+                obj.vertex_groups['Root Vertices'].add([vert.index], 1, 'ADD')
+                
+        return (obj)
 
-print ("END")    
-
-
-#bpy.app.handlers.frame_change_post.clear()
-#bpy.app.handlers.frame_change_post.append(baker)
-
-
+print ("END")        
+        
 def register():
     bpy.utils.register_class(ParticleMeshBakerPanel)
     bpy.utils.register_class(ParticleMeshBaker)
-
+    bpy.utils.register_class(ParticleCurveBaker)
+    bpy.utils.register_class(ObjectCurve)
 
 def unregister():
     bpy.utils.unregister_class(ParticleMeshBakerPanel)
     bpy.utils.unregister_class(ParticleMeshBaker)
-    
+    bpy.utils.unregister_class(ParticleCurveBaker)
+    bpy.utils.unregister_class(ObjectCurve)
 
 
 if __name__ == "__main__":
